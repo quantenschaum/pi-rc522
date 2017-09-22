@@ -3,17 +3,22 @@ pi-rc522 consists of two Python classes for controlling an SPI RFID module "RC52
 
 Based on [MFRC522-python](https://github.com/mxgxw/MFRC522-python/blob/master/README.md).
 
-Install using pip:
+## About this fork
+This is a fork of [ondryaso's pi-rc522](https://github.com/ondryaso/pi-rc522). The changes are:
+
+- Use **BCM pin numbering** by default, so this will work togher with [gpiozero](https://github.com/RPi-Distro/python-gpiozero).
+- Made **IRQ optional**, by setting `pin_irq=0` the IRQ functionality is disabled.
+- Improved **inital reset** by pulling reset line to 0 and then to 1
+- Added some logging, not just prints
+- Added a doc string to `RFID` class
+
+:exclamation: When using together with gpiozero, instanciate `RFID` **before** importing and running gpiozero stuff and leave the pin mode untouched.
+
+## Installation
 ```
-pip install pi-rc522
+pip install https://github.com/quantenschaum/pi-rc522/archive/master.zip
 ```
 
-Or get source code from Github:
-```
-git clone https://github.com/ondryaso/pi-rc522.git
-cd pi-rc522
-python setup.py install
-```
 You'll also need to install the [**spidev**](https://pypi.python.org/pypi/spidev) and [**RPi.GPIO**](https://pypi.python.org/pypi/RPi.GPIO) libraries on Raspberry PI, and [**Adafruit_BBIO**](https://github.com/adafruit/adafruit-beaglebone-io-python) on Beaglebone Black (which should be installed by default).
 
 [MIFARE datasheet](http://www.nxp.com/documents/data_sheet/MF1S503x.pdf) can be useful.
@@ -24,16 +29,16 @@ Classic 1K MIFARE tag has **16 sectors**, each contains **4 blocks**. Each block
 ## Connecting
 Connecting RC522 module to SPI is pretty easy. You can use [this neat website](http://pi.gadgetoid.com/pinout) for reference.
 
-| Board pin name | Board pin | Physical RPi pin | RPi pin name | Beaglebone Black pin name |
-|----------------|-----------|------------------|--------------| --------------------------|
+| Board pin name | RC522 pin | Physical RPi pin | RPi pin name | Beaglebone Black pin name |
+|----------------|:---------:|:----------------:|--------------| --------------------------|
 | SDA            | 1         | 24               | GPIO8, CE0   | P9\_17, SPI0\_CS0         |
 | SCK            | 2         | 23               | GPIO11, SCKL | P9\_22, SPI0\_SCLK        |
 | MOSI           | 3         | 19               | GPIO10, MOSI | P9\_18, SPI0\_D1          |
 | MISO           | 4         | 21               | GPIO9, MISO  | P9\_21, SPI0\_D0          |
 | IRQ            | 5         | 18               | GPIO24       | P9\_15, GPIO\_48          |
-| GND            | 6         | 6, 9, 20, 25     | Ground       | Ground                    |
+| GND            | 6         | 20               | Ground       | Ground                    |
 | RST            | 7         | 22               | GPIO25       | P9\_23, GPIO\_49          |
-| 3.3V           | 8         | 1,17             | 3V3          | VDD\_3V3                  |
+| 3.3V           | 8         | 17               | 3V3          | VDD\_3V3                  |
 
 You can also connect the SDA pin to CE1 (GPIO7, pin #26) and call the RFID constructor with *bus=0, device=1*
 and you can connect RST pin to any other free GPIO pin and call the constructor with *pin_rst=__BOARD numbering pin__*.
