@@ -1,9 +1,12 @@
 import threading
 from time import sleep
+import atexit
+
 import logging
-_debug = logging.getLogger(__name__).debug
-_warning = logging.getLogger(__name__).warning
-_error = logging.getLogger(__name__).error
+_logger = logging.getLogger('RC522')
+_debug = _logger.debug
+_warning = _logger.warning
+_error = _logger.error
 
 RASPBERRY = object()
 BEAGLEBONE = object()
@@ -50,6 +53,7 @@ class RFID(object):
         pin_irq: IRQ pin used in `wait_for_tag`, disable IRQ with 0 (default=24 on RaspberryPi).
         pin_mode: GPIO pin numbering mode,
             set to None to leave set mode as is (default=BCM on RaspberryPi otherwise None).
+        gain: antenna gain [0,7] (default=4)
     """
 
     mode_idle = 0x00
@@ -84,10 +88,14 @@ class RFID(object):
                  pin_ce=0,
                  pin_rst=def_pin_rst,
                  pin_irq=def_pin_irq,
-                 pin_mode=def_pin_mode):
-        _debug('RFID(bus={}, dev={}, ce={}, rst={}, irq={}, pinmode={})'.
-               format(device, bus, pin_ce, pin_rst, pin_irq, pin_mode))
+                 pin_mode=def_pin_mode,
+                 gain=antenna_gain):
 
+        _debug(
+            'RFID(bus={}, dev={}, ce={}, rst={}, irq={}, pinmode={}, gain={})'.
+            format(device, bus, pin_ce, pin_rst, pin_irq, pin_mode, gain))
+
+        atexit.register(self.cleanup)
         self.pin_rst = pin_rst
         self.pin_ce = pin_ce
         self.pin_irq = pin_irq
@@ -114,6 +122,7 @@ class RFID(object):
         if pin_ce != 0:
             GPIO.setup(pin_ce, GPIO.OUT)
             GPIO.output(pin_ce, 1)
+        self.set_antenna_gain(gain)
         self.init()
 
     def init(self):
@@ -156,11 +165,9 @@ class RFID(object):
             self.clear_bitmask(self.reg_tx_control, 0x03)
 
     def set_antenna_gain(self, gain):
-        """
-        Sets antenna gain from a value from 0 to 7.
-        """
-        if 0 <= gain <= 7:
-            self.antenna_gain = gain
+        """Sets antenna gain from a value from 0 to 7."""
+        assert 0 <= gain <= 7
+        self.antenna_gain = gain
 
     def card_write(self, command, data):
         back_data = []
@@ -427,6 +434,7 @@ class RFID(object):
         if self.pin_irq == 0:
             _warning('IRQ pin not configured')
             return
+            _debug('waiting for tag...')
         # enable IRQ on detect
         self.init()
         self.irq.clear()
@@ -440,6 +448,7 @@ class RFID(object):
             self.dev_write(0x0D, 0x87)
             waiting = not self.irq.wait(0.1)
         self.irq.clear()
+        _debug('tag detected')
         self.init()
 
     def reset(self):
@@ -447,9 +456,8 @@ class RFID(object):
         self.dev_write(0x01, self.mode_reset)
 
     def cleanup(self):
-        """
-        Calls stop_crypto() if needed and cleanups GPIO.
-        """
+        """Calls stop_crypto() if needed and cleanups GPIO."""
+        _debug('cleanup')
         if self.authed:
             self.stop_crypto()
         GPIO.cleanup()
@@ -464,3 +472,4 @@ class RFID(object):
             return RFIDUtil(self)
         except ImportError:
             return None
+
