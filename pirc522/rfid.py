@@ -1,4 +1,9 @@
 import threading
+from time import sleep
+import logging
+_debug = logging.getLogger(__name__).debug
+_warning = logging.getLogger(__name__).warning
+_error = logging.getLogger(__name__).error
 
 RASPBERRY = object()
 BEAGLEBONE = object()
@@ -8,23 +13,44 @@ try:
     import spidev
     import RPi.GPIO as GPIO
     SPIClass = spidev.SpiDev
-    def_pin_rst = 22
-    def_pin_irq = 18
-    def_pin_mode = GPIO.BOARD
+    def_pin_mode = GPIO.BCM
+    def_pin_rst = 25  #22
+    def_pin_irq = 24  #18
 except ImportError:
     # If they failed, try with Beaglebone
     import Adafruit_BBIO.SPI as SPI
     import Adafruit_BBIO.GPIO as GPIO
     SPIClass = SPI.SPI
     board = BEAGLEBONE
+    def_pin_mode = None
     def_pin_rst = "P9_23"
     def_pin_irq = "P9_15"
-    def_pin_mode = None
+
 
 class RFID(object):
-    pin_rst = 22
-    pin_ce = 0
-    pin_irq = 18
+    """RC522 RFID reader class
+
+    - https://www.nxp.com/docs/en/data-sheet/MFRC522.pdf
+    - https://tutorials-raspberrypi.de/raspberry-pi-rfid-rc522-tueroeffner-nfc/
+
+    default pins on RaspberryPi (BOARD) [BCM]
+
+    3v3       (17)  |  (18) [24] IRQ
+    MOSI [10] (19)  |  (20)      GND
+    MISO [ 9] (21)  |  (22) [25] RST
+    CLK  [11] (23)  |  (24) [ 8] CE0
+
+    Args:
+        bus: SPI bus number (default=0).
+        device: SPI device (default=0).
+        speed: SPI speed (default=1000000).
+        pin_ce: CE pin, selected automatically by hardware implementation based on SPI device,
+            set it for manual override (default=0).
+        pin_rst: reset pin (default=25 on RaspberryPi).
+        pin_irq: IRQ pin used in `wait_for_tag`, disable IRQ with 0 (default=24 on RaspberryPi).
+        pin_mode: GPIO pin numbering mode,
+            set to None to leave set mode as is (default=BCM on RaspberryPi otherwise None).
+    """
 
     mode_idle = 0x00
     mode_auth = 0x0E
@@ -33,37 +59,38 @@ class RFID(object):
     mode_transrec = 0x0C
     mode_reset = 0x0F
     mode_crc = 0x03
-
     auth_a = 0x60
     auth_b = 0x61
-
     act_read = 0x30
     act_write = 0xA0
     act_increment = 0xC1
     act_decrement = 0xC0
     act_restore = 0xC2
     act_transfer = 0xB0
-
     act_reqidl = 0x26
     act_reqall = 0x52
     act_anticl = 0x93
     act_select = 0x93
     act_end = 0x50
-
     reg_tx_control = 0x14
     length = 16
-
     antenna_gain = 0x04
-
     authed = False
-    irq = threading.Event()
 
-    def __init__(self, bus=0, device=0, speed=1000000, pin_rst=def_pin_rst,
-            pin_ce=0, pin_irq=def_pin_irq, pin_mode = def_pin_mode):
+    def __init__(self,
+                 bus=0,
+                 device=0,
+                 speed=1000000,
+                 pin_ce=0,
+                 pin_rst=def_pin_rst,
+                 pin_irq=def_pin_irq,
+                 pin_mode=def_pin_mode):
+        _debug('RFID(bus={}, dev={}, ce={}, rst={}, irq={}, pinmode={})'.
+               format(device, bus, pin_ce, pin_rst, pin_irq, pin_mode))
+
         self.pin_rst = pin_rst
         self.pin_ce = pin_ce
         self.pin_irq = pin_irq
-
         self.spi = SPIClass()
         self.spi.open(bus, device)
         if board == RASPBERRY:
@@ -76,10 +103,14 @@ class RFID(object):
             GPIO.setmode(pin_mode)
         if pin_rst != 0:
             GPIO.setup(pin_rst, GPIO.OUT)
-            GPIO.output(pin_rst, 1)
-        GPIO.setup(pin_irq, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(pin_irq, GPIO.FALLING,
-                callback=self.irq_callback)
+            for i in (0, 1):
+                GPIO.output(pin_rst, i)
+                sleep(0.1)
+        if pin_irq != 0:
+            self.irq = threading.Event()
+            GPIO.setup(pin_irq, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            GPIO.add_event_detect(
+                pin_irq, GPIO.FALLING, callback=self.irq_callback)
         if pin_ce != 0:
             GPIO.setup(pin_ce, GPIO.OUT)
             GPIO.output(pin_ce, 1)
@@ -93,15 +124,13 @@ class RFID(object):
         self.dev_write(0x2C, 0)
         self.dev_write(0x15, 0x40)
         self.dev_write(0x11, 0x3D)
-        self.dev_write(0x26, (self.antenna_gain<<4))
+        self.dev_write(0x26, (self.antenna_gain << 4))
         self.set_antenna(True)
 
     def spi_transfer(self, data):
-        if self.pin_ce != 0:
-            GPIO.output(self.pin_ce, 0)
+        if self.pin_ce != 0: GPIO.output(self.pin_ce, 0)
         r = self.spi.xfer2(data)
-        if self.pin_ce != 0:
-            GPIO.output(self.pin_ce, 1)
+        if self.pin_ce != 0: GPIO.output(self.pin_ce, 1)
         return r
 
     def dev_write(self, address, value):
@@ -176,7 +205,7 @@ class RFID(object):
                 error = False
 
                 if n & irq & 0x01:
-                    print("E1")
+                    _error("ERROR 1")
                     error = True
 
                 if command == self.mode_transrec:
@@ -196,7 +225,7 @@ class RFID(object):
                     for i in range(n):
                         back_data.append(self.dev_read(0x09))
             else:
-                print("E2")
+                _error("ERROR 2")
                 error = True
 
         return (error, back_data, back_length)
@@ -210,7 +239,10 @@ class RFID(object):
         back_bits = 0
 
         self.dev_write(0x0D, 0x07)
-        (error, back_data, back_bits) = self.card_write(self.mode_transrec, [req_mode, ])
+        (error, back_data, back_bits) = self.card_write(
+            self.mode_transrec, [
+                req_mode,
+            ])
 
         if error or (back_bits != 0x10):
             return (True, None)
@@ -231,7 +263,8 @@ class RFID(object):
         serial_number.append(self.act_anticl)
         serial_number.append(0x20)
 
-        (error, back_data, back_bits) = self.card_write(self.mode_transrec, serial_number)
+        (error, back_data, back_bits) = self.card_write(
+            self.mode_transrec, serial_number)
         if not error:
             if len(back_data) == 5:
                 for i in range(4):
@@ -284,7 +317,8 @@ class RFID(object):
         buf.append(crc[0])
         buf.append(crc[1])
 
-        (error, back_data, back_length) = self.card_write(self.mode_transrec, buf)
+        (error, back_data, back_length) = self.card_write(
+            self.mode_transrec, buf)
 
         if (not error) and (back_length == 0x18):
             return False
@@ -347,7 +381,8 @@ class RFID(object):
         crc = self.calculate_crc(buf)
         buf.append(crc[0])
         buf.append(crc[1])
-        (error, back_data, back_length) = self.card_write(self.mode_transrec, buf)
+        (error, back_data, back_length) = self.card_write(
+            self.mode_transrec, buf)
 
         if len(back_data) != 16:
             error = True
@@ -365,8 +400,9 @@ class RFID(object):
         crc = self.calculate_crc(buf)
         buf.append(crc[0])
         buf.append(crc[1])
-        (error, back_data, back_length) = self.card_write(self.mode_transrec, buf)
-        if not(back_length == 4) or not((back_data[0] & 0x0F) == 0x0A):
+        (error, back_data, back_length) = self.card_write(
+            self.mode_transrec, buf)
+        if not (back_length == 4) or not ((back_data[0] & 0x0F) == 0x0A):
             error = True
 
         if not error:
@@ -377,8 +413,9 @@ class RFID(object):
             crc = self.calculate_crc(buf_w)
             buf_w.append(crc[0])
             buf_w.append(crc[1])
-            (error, back_data, back_length) = self.card_write(self.mode_transrec, buf_w)
-            if not(back_length == 4) or not((back_data[0] & 0x0F) == 0x0A):
+            (error, back_data, back_length) = self.card_write(
+                self.mode_transrec, buf_w)
+            if not (back_length == 4) or not ((back_data[0] & 0x0F) == 0x0A):
                 error = True
 
         return error
@@ -387,6 +424,9 @@ class RFID(object):
         self.irq.set()
 
     def wait_for_tag(self):
+        if self.pin_irq == 0:
+            _warning('IRQ pin not configured')
+            return
         # enable IRQ on detect
         self.init()
         self.irq.clear()
