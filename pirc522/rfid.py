@@ -434,7 +434,7 @@ class RFID(object):
         if self.pin_irq == 0:
             _warning('IRQ pin not configured')
             return
-            _debug('waiting for tag...')
+        _debug('waiting for tag...')
         # enable IRQ on detect
         self.init()
         self.irq.clear()
@@ -472,4 +472,3 @@ class RFID(object):
             return RFIDUtil(self)
         except ImportError:
             return None
-
